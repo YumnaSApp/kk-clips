@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>KK Clips — AI Viral Clip Maker</title>
+<style>
+:root{--bg:#0b0b12;--card:#15151f;--line:#262636;--txt:#f2f2f7;--mut:#9a9ab0;--acc:#7c5cff;--acc2:#ff3d81;--ok:#2bd67b;--warn:#ffcc00}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--txt);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:max(16px,env(safe-area-inset-top)) 16px 60px;max-width:980px;margin:0 auto}
+header{display:flex;align-items:center;gap:10px;margin:6px 0 18px}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-weight:900;font-size:16px}
+h1{font-size:22px;letter-spacing:-.3px}
+h1 span{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-background-clip:text;color:transparent}
+.sub{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:16px}
+.tabs{display:flex;background:#0f0f17;border-radius:12px;padding:4px;margin-bottom:14px}
+.tabs button{flex:1;border:0;background:none;color:var(--mut);padding:10px;border-radius:9px;font-weight:600;font-size:14px}
+.tabs button.on{background:var(--line);color:var(--txt)}
+.drop{border:2px dashed #34344a;border-radius:14px;padding:28px 12px;text-align:center;color:var(--mut);cursor:pointer}
+.drop.has{border-color:var(--acc);color:var(--txt)}
+.drop b{display:block;color:var(--txt);font-size:16px;margin-bottom:4px}
+input[type=url],input[type=password],select{width:100%;background:#0f0f17;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:13px;font-size:15px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+label.f{font-size:12px;color:var(--mut);display:block}
+label.f select{margin-top:5px}
+.toggles{display:flex;gap:16px;margin-top:14px;flex-wrap:wrap}
+.toggles label{display:flex;align-items:center;gap:7px;font-size:14px}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--acc)}
+.go{width:100%;margin-top:16px;border:0;border-radius:14px;padding:15px;font-size:16px;font-weight:800;color:#fff;background:linear-gradient(90deg,var(--acc),var(--acc2));cursor:pointer}
+.go:disabled{opacity:.5}
+.bar{height:8px;background:#0f0f17;border-radius:8px;overflow:hidden;margin:10px 0 6px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--acc2));transition:width .4s}
+.stage{font-size:13px;color:var(--mut)}
+.err{color:#ff6b6b;font-size:14px;margin-top:8px}
+.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.clip{background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden;display:flex;flex-direction:column}
+.clip video{width:100%;aspect-ratio:9/16;background:#000;display:block}
+.cb{padding:12px;display:flex;flex-direction:column;gap:8px;flex:1}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.score{font-weight:900;font-size:13px;padding:3px 9px;border-radius:20px;background:rgba(43,214,123,.15);color:var(--ok)}
+.score.mid{background:rgba(255,204,0,.15);color:var(--warn)}
+.len{font-size:12px;color:var(--mut)}
+.ttl{font-weight:700;font-size:15px}
+.why{font-size:13px;color:var(--mut)}
+.tags{font-size:12px;color:#8fb3ff;word-break:break-word}
+.btns{display:flex;gap:8px;margin-top:auto}
+.btns a,.btns button{flex:1;text-align:center;text-decoration:none;border:1px solid var(--line);background:#1d1d2a;color:var(--txt);border-radius:11px;padding:10px 6px;font-size:13px;font-weight:600;cursor:pointer}
+.btns a.dl{background:var(--acc);border-color:var(--acc)}
+h2{font-size:17px;margin:22px 0 12px}
+.hist{display:flex;flex-direction:column;gap:8px}
+.hi{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--card);border:1px solid var(--line);border-radius:13px;cursor:pointer}
+.hi .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+.hi .s{font-size:12px;color:var(--mut)}
+.hi .x{border:0;background:none;color:var(--mut);font-size:18px;padding:0 4px}
+.toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%);background:#fff;color:#000;padding:10px 16px;border-radius:20px;font-weight:600;font-size:14px;opacity:0;transition:.25s;pointer-events:none}
+.toast.on{opacity:1}
+.hide{display:none!important}
+.note{font-size:12px;color:var(--mut);margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">KK</div>
+  <div><h1>KK <span>Clips</span></h1><div class="sub">One long video → viral Shorts, Reels &amp; TikToks</div></div>
+</header>
+
+<div id="lock" class="card hide">
+  <p style="margin-bottom:10px">Enter your password</p>
+  <input type="password" id="pw" placeholder="Password">
+  <button class="go" onclick="savePw()">Open</button>
+</div>
+
+<div id="app" class="hide">
+  <div class="card">
+    <div class="tabs">
+      <button id="tUp" class="on" onclick="tab('up')">⬆️ Upload video</button>
+      <button id="tLink" onclick="tab('link')">🔗 Paste link</button>
+    </div>
+    <div id="pUp">
+      <div class="drop" id="drop" onclick="file.click()"><b id="dropT">Tap to choose a video</b><span id="dropS">MP4 / MOV — podcasts, streams, interviews</span></div>
+      <input type="file" id="file" accept="video/*" class="hide">
+    </div>
+    <div id="pLink" class="hide">
+      <input type="url" id="link" placeholder="https://youtube.com/watch?v=...">
+      <div class="note">If YouTube blocks the link, download the video and use Upload instead.</div>
+    </div>
+    <div class="grid">
+      <label class="f">Number of clips<select id="count"><option>3</option><option selected>5</option><option>8</option><option>10</option><option>15</option></select></label>
+      <label class="f">Clip length<select id="len"><option value="15-30">15–30 sec</option><option value="20-60" selected>20–60 sec</option><option value="30-90">30–90 sec</option><option value="60-180">1–3 min</option></select></label>
+      <label class="f">Layout<select id="layout"><option value="fit" selected>Full frame + blur</option><option value="crop">Zoom to fill</option></select></label>
+      <label class="f">Language<select id="lang"><option value="">Auto detect</option><option value="en">English</option><option value="hi">Hindi</option><option value="ur">Urdu</option><option value="bn">Bengali</option></select></label>
+    </div>
+    <div class="toggles">
+      <label><input type="checkbox" id="cap" checked> Captions</label>
+      <label><input type="checkbox" id="hook" checked> Hook title on top</label>
+    </div>
+    <button class="go" id="goBtn" onclick="start()">✨ Generate viral clips</button>
+    <div id="upProg" class="hide"><div class="bar"><i id="upBar"></i></div><div class="stage" id="upTxt">Uploading…</div></div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div id="cur" class="hide">
+    <h2 id="curName"></h2>
+    <div class="card" id="curProg"><div class="bar"><i id="jobBar"></i></div><div class="stage" id="jobStage"></div><div class="err" id="jobErr"></div></div>
+    <div class="clips" id="clips"></div>
+  </div>
+
+  <h2>Recent videos</h2>
+  <div class="hist" id="hist"><div class="sub">Nothing yet.</div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let PW = localStorage.getItem('kkpw') || '', mode = 'up', curId = null, timer = null;
+const $ = id => document.getElementById(id);
+const api = (p, o = {}) => fetch(p, {...o, headers: {...(o.headers || {}), 'X-Pass': PW}}).then(async r => {
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLock(); throw new Error('Wrong password'); }
+  if (!r.ok) throw new Error(j.error || 'Error ' + r.status);
+  return j;
+});
+function toast(t){ const e=$('toast'); e.textContent=t; e.classList.add('on'); setTimeout(()=>e.classList.remove('on'),1600); }
+function showLock(){ $('lock').classList.remove('hide'); $('app').classList.add('hide'); }
+function savePw(){ PW=$('pw').value; localStorage.setItem('kkpw',PW); boot(); }
+function tab(m){ mode=m; $('tUp').classList.toggle('on',m==='up'); $('tLink').classList.toggle('on',m==='link');
+  $('pUp').classList.toggle('hide',m!=='up'); $('pLink').classList.toggle('hide',m!=='link'); }
+$('file').onchange = () => { const f=$('file').files[0]; if(!f) return;
+  $('drop').classList.add('has'); $('dropT').textContent=f.name; $('dropS').textContent=(f.size/1048576).toFixed(0)+' MB'; };
+
+function opts(){ const [mn,mx]=$('len').value.split('-');
+  return new URLSearchParams({count:$('count').value,min_len:mn,max_len:mx,layout:$('layout').value,
+    captions:$('cap').checked?1:0,hook:$('hook').checked?1:0,language:$('lang').value}); }
+
+async function start(){
+  $('err').textContent=''; const q=opts();
+  try {
+    let id;
+    if (mode==='link') {
+      const url=$('link').value.trim(); if(!url) return $('err').textContent='Paste a video link first.';
+      $('goBtn').disabled=true;
+      id=(await api('/api/link?'+q,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})})).id;
+    } else {
+      const f=$('file').files[0]; if(!f) return $('err').textContent='Choose a video first.';
+      $('goBtn').disabled=true; q.set('name',f.name); id=await upload(f,q);
+    }
+    $('goBtn').disabled=false; watch(id); loadHist();
+  } catch(e){ $('goBtn').disabled=false; $('upProg').classList.add('hide'); $('err').textContent=e.message; }
+}
+function upload(f,q){ return new Promise((res,rej)=>{
+  const x=new XMLHttpRequest(); x.open('POST','/api/upload?'+q); x.setRequestHeader('X-Pass',PW);
+  $('upProg').classList.remove('hide');
+  x.upload.onprogress=e=>{ if(e.lengthComputable){ const p=Math.round(e.loaded/e.total*100); $('upBar').style.width=p+'%'; $('upTxt').textContent='Uploading… '+p+'%'; } };
+  x.onload=()=>{ $('upProg').classList.add('hide'); let j={}; try{j=JSON.parse(x.responseText)}catch(e){}
+    x.status===200?res(j.id):rej(new Error(j.error||'Upload failed')); };
+  x.onerror=()=>{ $('upProg').classList.add('hide'); rej(new Error('Upload failed — check your connection')); };
+  x.send(f); }); }
+
+function watch(id){ curId=id; clearTimeout(timer); $('cur').classList.remove('hide'); $('clips').innerHTML=''; poll(); window.scrollTo({top:$('cur').offsetTop-10,behavior:'smooth'}); }
+let shown=0;
+async function poll(){
+  if(!curId) return;
+  try {
+    const j=await api('/api/jobs/'+curId);
+    $('curName').textContent=j.name||'Video';
+    const busy=j.status==='queued'||j.status==='working';
+    $('curProg').classList.toggle('hide',j.status==='done');
+    $('jobBar').style.width=(j.pct||0)+'%'; $('jobStage').textContent=busy?(j.stage+'…'):'';
+    $('jobErr').textContent=j.status==='error'?j.error:'';
+    renderClips(j);
+    if(busy) timer=setTimeout(poll,2500); else loadHist();
+  } catch(e){ timer=setTimeout(poll,5000); }
+}
+function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderClips(j){
+  const c=j.clips||[]; const box=$('clips');
+  if(box.dataset.job!==j.id){ box.innerHTML=''; box.dataset.job=j.id; }
+  for(let i=box.children.length;i<c.length;i++){
+    const k=c[i], p=PW?('?p='+encodeURIComponent(PW)):'', amp=PW?'&':'?';
+    const tags=(k.hashtags||[]).map(t=>'#'+String(t).replace(/^#/,'').toLowerCase()).join(' ');
+    const fname=(k.hook||('clip'+(i+1))).replace(/[^A-Za-z0-9 ]/g,'').trim()+'.mp4';
+    const d=document.createElement('div'); d.className='clip';
+    d.innerHTML=`<video controls playsinline preload="none" poster="/files/${j.id}/${k.thumb}${p}" src="/files/${j.id}/${k.file}${p}"></video>
+      <div class="cb"><div class="row"><span class="score ${k.score<75?'mid':''}">🔥 ${k.score}/100</span><span class="len">${k.length}s · #${i+1}</span></div>
+      <div class="ttl">${esc(k.title)}</div><div class="why">${esc(k.why)}</div><div class="tags">${esc(tags)}</div>
+      <div class="btns"><a class="dl" href="/files/${j.id}/${k.file}${p}${amp}dl=${encodeURIComponent(fname)}">⬇️ Download</a>
+      <button data-t="title">Copy title</button><button data-t="desc">Copy text</button></div></div>`;
+    d.querySelector('[data-t=title]').onclick=()=>copy(k.title);
+    d.querySelector('[data-t=desc]').onclick=()=>copy(k.title+'\n\n'+(k.description||'')+'\n\n'+tags);
+    box.appendChild(d);
+  }
+}
+function copy(t){ navigator.clipboard.writeText(t).then(()=>toast('Copied ✅')).catch(()=>toast('Copy failed')); }
+async function loadHist(){
+  try { const l=await api('/api/jobs'); const h=$('hist');
+    if(!l.length){ h.innerHTML='<div class="sub">Nothing yet.</div>'; return; }
+    h.innerHTML='';
+    l.forEach(j=>{ const d=document.createElement('div'); d.className='hi';
+      const st=j.status==='done'?`✅ ${j.count} clips`:j.status==='error'?'❌ Failed':`⏳ ${j.pct||0}%`;
+      d.innerHTML=`<div class="n">${esc(j.name)}</div><div class="s">${st}</div><button class="x" title="Delete">×</button>`;
+      d.onclick=()=>watch(j.id);
+      d.querySelector('.x').onclick=async e=>{ e.stopPropagation(); if(!confirm('Delete this video and its clips?')) return;
+        try{ await api('/api/jobs/'+j.id,{method:'DELETE'}); if(curId===j.id){curId=null;$('cur').classList.add('hide');} loadHist(); }catch(err){toast(err.message)} };
+      h.appendChild(d); });
+  } catch(e){}
+}
+async function boot(){
+  const h=await fetch('/api/health').then(r=>r.json()).catch(()=>({}));
+  if(h.password && !PW) return showLock();
+  $('lock').classList.add('hide'); $('app').classList.remove('hide');
+  if(h.ai_key===false) $('err').textContent='⚠️ AI key missing on the server (GROQ_API_KEY).';
+  await loadHist();
+  const busy=[...document.querySelectorAll('.hi .s')].length;
+}
+boot();
+</script>
+</body>
+</html>

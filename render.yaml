@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: kk-clips
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
