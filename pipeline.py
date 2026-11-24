@@ -114,7 +114,7 @@ def transcribe(video, job_dir, language=None, progress=lambda m: None):
     if not STT_KEY:
         raise PipelineError("No AI key set. Add GROQ_API_KEY on the server (free at console.groq.com).")
     if not probe_has_audio(video):
-        raise PipelineError("This video has no sound, so there is nothing to transcribe.")
+        return {"segments": [], "words": []}  # no sound: clips get picked without speech
     chunk_len = 1200  # 20 min per chunk (~5 MB at 32 kbps) stays under the 25 MB upload limit
     adir = os.path.join(job_dir, "audio")
     os.makedirs(adir, exist_ok=True)
@@ -144,8 +144,7 @@ def transcribe(video, job_dir, language=None, progress=lambda m: None):
             step = (s["end"] - s["start"]) / max(len(toks), 1)
             for k, t in enumerate(toks):
                 words.append({"w": t, "start": s["start"] + k * step, "end": s["start"] + (k + 1) * step})
-    if not words:
-        raise PipelineError("No speech was found in this video.")
+    print(f"[kk] transcript: {len(segments)} segments, {len(words)} words", flush=True)
     return {"segments": segments, "words": words}
 
 
@@ -197,42 +196,116 @@ def _lines(segments, t0, t1):
     return "\n".join(out)
 
 
-def pick_moments(tr, duration, n, min_len, max_len, video_title, progress=lambda m: None):
+def _parse_t(v):
+    """Accepts 12.5, "12.5", "1:23", "01:02:03", "[12.5-20]"."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip().strip("[]s ")
+    s = s.split("-")[0].strip() if re.match(r"^[\d.:]+\s*-\s*[\d.:]+$", s) else s
+    if ":" in s:
+        t = 0.0
+        for part in s.split(":"):
+            t = t * 60 + float(part)
+        return t
+    return float(s)
+
+
+def _energy_picks(video, duration, n, min_len, max_len, taken):
+    """Fallback for videos with little/no speech (music, raves, sports): pick the loudest moments."""
+    L = max(min_len, min(max_len, 30, duration / max(1, n)))
+    step = 0.5
+    try:
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", video, "-vn", "-ac", "1", "-ar", "4000",
+                              "-f", "s16le", "-"], capture_output=True).stdout
+        import array
+        a = array.array("h", raw)
+        per = int(4000 * step)
+        rms = [math.sqrt(sum(x * x for x in a[i:i + per][::4]) / max(1, len(a[i:i + per][::4])))
+               for i in range(0, len(a), per)]
+    except Exception:
+        rms = []
+    if not rms:
+        rms = [1.0] * int(duration / step)
+    win = max(1, int(L / step))
+    scores = []
+    run_sum = sum(rms[:win])
+    for i in range(0, max(1, len(rms) - win)):
+        scores.append((run_sum, i * step))
+        if i + win < len(rms):
+            run_sum += rms[i + win] - rms[i]
+    scores.sort(reverse=True)
+    top = scores[0][0] or 1
+    out = []
+    hooks = ["WAIT FOR IT", "THIS MOMENT WAS INSANE", "NOBODY EXPECTED THIS", "WATCH TILL THE END", "THE BEST PART"]
+    for sc, s in scores:
+        e = min(duration, s + L)
+        if all(e <= f["start"] or s >= f["end"] for f in taken + out):
+            k = len(out)
+            out.append({"start": round(s, 2), "end": round(e, 2), "score": max(40, int(90 * sc / top) - k * 3),
+                        "hook": hooks[k % len(hooks)], "title": hooks[k % len(hooks)].title() + " 🔥 #shorts",
+                        "description": "The most intense moment from this video. Watch till the end and follow for more!",
+                        "hashtags": ["shorts", "viral", "trending", "reels", "fyp"],
+                        "why": "Picked as one of the loudest, most energetic moments."})
+        if len(out) >= n:
+            break
+    return out
+
+
+def pick_moments(tr, duration, n, min_len, max_len, video_title, video=None, progress=lambda m: None):
     if MOCK:
         return _mock_picks(duration, n, min_len, max_len)
     if not LLM_KEY:
         raise PipelineError("No AI key set. Add GROQ_API_KEY on the server.")
+    # short videos: shrink clip lengths so clips still fit
+    max_len = min(max_len, max(10, int(duration)))
+    min_len = min(min_len, max(5, int(duration * 0.4)))
     segs = tr["segments"]
-    window = 900  # 15-min windows keep each AI request small for free-tier limits
-    n_win = max(1, math.ceil(duration / window))
-    per_win = max(2, math.ceil(n / n_win) + 1)
     found = []
-    for k in range(n_win):
-        t0, t1 = k * window, min(duration, (k + 1) * window + max_len)
-        text = _lines(segs, t0, t1)
-        if len(text) < 80:
-            continue
-        progress(f"AI is finding viral moments {k + 1}/{n_win}")
-        prompt = PICK_PROMPT.format(n=per_win if n_win > 1 else n, min_len=min_len, max_len=max_len,
-                                    video_title=video_title or "unknown", transcript=text)
-        body = json.dumps({"model": LLM_MODEL, "temperature": 0.4,
-                           "response_format": {"type": "json_object"},
-                           "messages": [{"role": "user", "content": prompt}]}).encode()
-        res = _post(LLM_URL, LLM_KEY, body, {"Content-Type": "application/json"}, timeout=180)
-        try:
-            data = json.loads(res["choices"][0]["message"]["content"])
-            found += data.get("clips", [])
-        except (KeyError, ValueError, IndexError):
-            continue
-    return _clean_picks(found, tr["words"], duration, n, min_len, max_len)
+    if segs:
+        window = 900  # 15-min windows keep each AI request small for free-tier limits
+        n_win = max(1, math.ceil(duration / window))
+        per_win = max(2, math.ceil(n / n_win) + 1)
+        for k in range(n_win):
+            t0, t1 = k * window, min(duration, (k + 1) * window + max_len)
+            text = _lines(segs, t0, t1)
+            if len(text) < 20:
+                continue
+            progress(f"AI is finding viral moments {k + 1}/{n_win}")
+            prompt = PICK_PROMPT.format(n=per_win if n_win > 1 else n, min_len=min_len, max_len=max_len,
+                                        video_title=video_title or "unknown", transcript=text)
+            body = json.dumps({"model": LLM_MODEL, "temperature": 0.4,
+                               "response_format": {"type": "json_object"},
+                               "messages": [{"role": "user", "content": prompt}]}).encode()
+            try:
+                res = _post(LLM_URL, LLM_KEY, body, {"Content-Type": "application/json"}, timeout=180)
+                content = res["choices"][0]["message"]["content"]
+                print(f"[kk] AI reply: {content[:1500]}", flush=True)
+                data = json.loads(content)
+                if isinstance(data, dict):
+                    data = data.get("clips") or next((v for v in data.values() if isinstance(v, list)), [])
+                found += [c for c in data if isinstance(c, dict)]
+            except PipelineError as e:
+                print(f"[kk] AI error: {e}", flush=True)
+            except (KeyError, ValueError, IndexError, TypeError) as e:
+                print(f"[kk] AI reply unreadable: {e}", flush=True)
+    picks = _clean_picks(found, tr["words"], duration, n, min_len, max_len)
+    print(f"[kk] duration={duration:.0f}s AI gave {len(found)}, kept {len(picks)}", flush=True)
+    if not picks and video:  # little or no speech: use the most energetic moments
+        progress("Finding the most exciting moments")
+        picks = _energy_picks(video, duration, n, min_len, max_len, [])
+    if not picks:
+        raise PipelineError("Could not make clips from this video. Try a different video.")
+    return picks
 
 
 def _clean_picks(clips, words, duration, n, min_len, max_len):
     good = []
     for c in clips:
         try:
-            s, e = float(c["start"]), float(c["end"])
-        except (KeyError, TypeError, ValueError):
+            s, e = _parse_t(c.get("start", c.get("start_time"))), _parse_t(c.get("end", c.get("end_time")))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if e <= s:
             continue
         s, e = max(0.0, s), min(duration, e)
         # snap to word boundaries so clips never cut a word in half
@@ -243,10 +316,17 @@ def _clean_picks(clips, words, duration, n, min_len, max_len):
         e = min(duration, e + 0.35)
         if e - s > max_len + 5:
             e = s + max_len
-        if e - s < max(5, min_len * 0.6):
+        if e - s < min(5, min_len):
             continue
         c.update(start=round(s, 2), end=round(e, 2))
-        c["score"] = int(c.get("score") or 50)
+        try:
+            c["score"] = int(float(c.get("score") or 50))
+        except (TypeError, ValueError):
+            c["score"] = 50
+        for k in ("hook", "title", "description", "why"):
+            c[k] = str(c.get(k) or "")
+        if not isinstance(c.get("hashtags"), list):
+            c["hashtags"] = []
         good.append(c)
     good.sort(key=lambda c: -c["score"])
     final = []
@@ -255,8 +335,6 @@ def _clean_picks(clips, words, duration, n, min_len, max_len):
             final.append(c)
         if len(final) >= n:
             break
-    if not final:
-        raise PipelineError("The AI could not find good moments. Try a longer video or shorter clip length.")
     return final
 
 
@@ -401,7 +479,7 @@ def process(job, job_dir, update):
         json.dump(tr, f)
     update(stage="AI is finding viral moments", pct=35)
     min_len, max_len = int(o.get("min_len", 20)), int(o.get("max_len", 60))
-    picks = pick_moments(tr, duration, int(o.get("count", 5)), min_len, max_len, title,
+    picks = pick_moments(tr, duration, int(o.get("count", 5)), min_len, max_len, title, video=video,
                          progress=lambda m: update(stage=m, pct=40))
     clips = []
     for i, c in enumerate(picks, 1):
