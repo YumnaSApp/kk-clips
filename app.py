@@ -85,7 +85,10 @@ def parse_options(q):
             "max_len": clamp(g("max_len", 60), min_len + 5, 180),
             "layout": "crop" if g("layout", "fit") == "crop" else "fit",
             "captions": g("captions", "1") == "1", "hook": g("hook", "1") == "1",
-            "language": re.sub(r"[^a-z]", "", g("language", ""))[:3]}
+            "language": re.sub(r"[^a-z]", "", g("language", ""))[:3],
+            "endcard": g("endcard", "yt") if g("endcard", "yt") in ("yt", "ig", "none") else "yt",
+            "handle": re.sub(r"[^@A-Za-z0-9._-]", "", g("handle", ""))[:40],
+            "topic": re.sub(r"[{}\\]", "", g("topic", ""))[:200]}
 
 
 class H(BaseHTTPRequestHandler):

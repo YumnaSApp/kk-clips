@@ -22,7 +22,7 @@ h1 span{background:linear-gradient(90deg,var(--acc),var(--acc2));-webkit-backgro
 .drop{border:2px dashed #34344a;border-radius:14px;padding:28px 12px;text-align:center;color:var(--mut);cursor:pointer}
 .drop.has{border-color:var(--acc);color:var(--txt)}
 .drop b{display:block;color:var(--txt);font-size:16px;margin-bottom:4px}
-input[type=url],input[type=password],select{width:100%;background:#0f0f17;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:13px;font-size:15px}
+input[type=url],input[type=password],input[type=text],select{width:100%;background:#0f0f17;border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:13px;font-size:15px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
 label.f{font-size:12px;color:var(--mut);display:block}
 label.f select{margin-top:5px}
@@ -96,6 +96,11 @@ h2{font-size:17px;margin:22px 0 12px}
       <label class="f">Layout<select id="layout"><option value="fit" selected>Full frame + blur</option><option value="crop">Zoom to fill</option></select></label>
       <label class="f">Language<select id="lang"><option value="">Auto detect</option><option value="en">English</option><option value="hi">Hindi</option><option value="ur">Urdu</option><option value="bn">Bengali</option></select></label>
     </div>
+    <label class="f" style="margin-top:14px">What is this video? (helps AI write titles — optional)<input type="text" id="topic" placeholder="e.g. Anyma live in Mumbai, crowd going crazy" style="margin-top:5px"></label>
+    <div class="grid">
+      <label class="f">End card<select id="endcard"><option value="yt" selected>YouTube: LIKE &amp; SUBSCRIBE</option><option value="ig">Instagram: LIKE &amp; FOLLOW</option><option value="none">No end card</option></select></label>
+      <label class="f">Channel handle<input type="text" id="handle" placeholder="@yourchannel" style="margin-top:5px"></label>
+    </div>
     <div class="toggles">
       <label><input type="checkbox" id="cap" checked> Captions</label>
       <label><input type="checkbox" id="hook" checked> Hook title on top</label>
@@ -135,7 +140,12 @@ $('file').onchange = () => { const f=$('file').files[0]; if(!f) return;
 
 function opts(){ const [mn,mx]=$('len').value.split('-');
   return new URLSearchParams({count:$('count').value,min_len:mn,max_len:mx,layout:$('layout').value,
-    captions:$('cap').checked?1:0,hook:$('hook').checked?1:0,language:$('lang').value}); }
+    captions:$('cap').checked?1:0,hook:$('hook').checked?1:0,language:$('lang').value,
+    endcard:$('endcard').value,handle:$('handle').value.trim(),topic:$('topic').value.trim()}); }
+$('handle').value=localStorage.getItem('kkhandle')||'@kamrankhurshid7877';
+$('handle').onchange=()=>localStorage.setItem('kkhandle',$('handle').value.trim());
+$('endcard').value=localStorage.getItem('kkend')||'yt';
+$('endcard').onchange=()=>localStorage.setItem('kkend',$('endcard').value);
 
 async function start(){
   $('err').textContent=''; const q=opts();

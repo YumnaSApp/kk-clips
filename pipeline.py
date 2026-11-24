@@ -585,7 +585,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 k += 1
             parts.append(" ".join(seg))
         text = "{\\fad(150,0)}" + "\\N".join(parts)
-        ev.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(dur + 2)},Hook,,0,0,0,,{text}")
+        ev.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(dur)},Hook,,0,0,0,,{text}")
     if captions:
         cw = [w for w in words if w["end"] > clip_start and w["start"] < clip_end and w["w"]]
         groups, g = [], []
@@ -613,13 +613,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return head + "\n".join(ev) + "\n"
 
 
-def render_clip(video, clip, words, job_dir, idx, layout="fit", captions=True, hook_on=True, size=(1080, 1920)):
+END_LEN = 2.5  # seconds of end card
+
+
+def _endcard_events(kind, handle, dur, W, H):
+    """LIKE & SUBSCRIBE (YouTube) or LIKE & FOLLOW (Instagram) end card + channel handle."""
+    word = "FOLLOW" if kind == "ig" else "SUBSCRIBE"
+    a, b = _ass_time(dur), _ass_time(dur + END_LEN + 1)
+    fs = int(H * 0.075)
+    ev = [f"Dialogue: 3,{a},{b},End,,0,0,0,,{{\\fad(200,0)\\pos({W // 2},{int(H * 0.40)})\\fs{fs}}}LIKE &",
+          f"Dialogue: 3,{a},{b},EndBox,,0,0,0,,{{\\fad(200,0)\\pos({W // 2},{int(H * 0.50)})\\fs{fs}}} {word} ",
+          f"Dialogue: 3,{a},{b},End,,0,0,0,,{{\\fad(300,0)\\pos({W // 2},{int(H * 0.60)})\\fs{int(fs * 0.62)}\\c&H0000E5FF&}}FOR MORE"]
+    if handle:
+        ev.append(f"Dialogue: 3,{a},{b},End,,0,0,0,,{{\\fad(400,0)\\pos({W // 2},{int(H * 0.68)})\\fs{int(fs * 0.55)}}}{_esc(handle)}")
+    return ev
+
+
+def render_clip(video, clip, words, job_dir, idx, layout="fit", captions=True, hook_on=True, size=(1080, 1920),
+                endcard="yt", handle=""):
     W, H = size
     s, e = clip["start"], clip["end"]
+    dur = e - s
     ass_name = f"clip{idx}.ass"
+    ass = build_ass(words, s, e, clip.get("hook", ""), W, H, captions, hook_on)
+    if endcard in ("yt", "ig"):
+        fs = int(H * 0.075)
+        ass = ass.replace("\n[Events]", f"\nStyle: End,{CAPTION_FONT},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,-1,0,0,0,100,100,0,0,1,{fs // 8},3,5,40,40,0,1"
+                          f"\nStyle: EndBox,{CAPTION_FONT},{fs},&H00FFFFFF,&H00FFFFFF,&H000000E6,&H000000E6,-1,0,0,0,100,100,0,0,3,{fs // 5},0,5,40,40,0,1"
+                          "\n\n[Events]", 1)
+        ass = ass.rstrip("\n") + "\n" + "\n".join(_endcard_events(endcard, handle, dur, W, H)) + "\n"
     with open(os.path.join(job_dir, ass_name), "w", encoding="utf-8") as f:
-        f.write(build_ass(words, s, e, clip.get("hook", ""), W, H, captions, hook_on))
+        f.write(ass)
     subs = f"ass={ass_name}:fontsdir={FONTS_DIR}" if os.path.isdir(FONTS_DIR) else f"ass={ass_name}"
+    if endcard in ("yt", "ig"):  # freeze last frame, darken it, show end card on top
+        subs = (f"tpad=stop_mode=clone:stop_duration={END_LEN},"
+                f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.6:t=fill:enable='gte(t,{dur:.2f})',{subs}")
     pre = f"scale='if(lt(iw,ih),{W},-2)':'if(lt(iw,ih),-2,{W})',"  # shrink 4K early: short side = {W}
     if layout == "crop":
         vf = f"[0:v]{pre}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,{subs}[v]"
@@ -630,9 +658,16 @@ def render_clip(video, clip, words, job_dir, idx, layout="fit", captions=True, h
               f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
               f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,{subs}[v]")
     out = f"clip{idx}.mp4"
+    audio_f, amap = "", []
+    if probe_has_audio(video):
+        if endcard in ("yt", "ig"):
+            audio_f = f";[0:a]afade=t=out:st={max(0, dur - 0.3):.2f}:d={END_LEN:.1f},apad=pad_dur={END_LEN}[a]"
+            amap = ["-map", "[a]"]
+        else:
+            amap = ["-map", "0:a"]
     # low-memory settings so 4K phone videos fit on a small (512 MB) server
-    cmd = ["ffmpeg", "-y", "-threads", THREADS, "-ss", f"{s:.2f}", "-i", os.path.abspath(video), "-t", f"{e - s:.2f}",
-           "-filter_complex_threads", "1", "-filter_complex", vf, "-map", "[v]", "-map", "0:a?",
+    cmd = ["ffmpeg", "-y", "-threads", THREADS, "-ss", f"{s:.2f}", "-t", f"{e - s:.2f}", "-i", os.path.abspath(video),
+           "-filter_complex_threads", "1", "-filter_complex", vf + audio_f, "-map", "[v]", *amap,
            "-c:v", "libx264", "-preset", PRESET, "-crf", "21", "-pix_fmt", "yuv420p", "-r", "30",
            "-threads", THREADS, "-x264-params", "rc-lookahead=8:sync-lookahead=0",
            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
@@ -663,16 +698,17 @@ def process(job, job_dir, update):
         json.dump(tr, f)
     update(stage="AI is finding viral moments", pct=35)
     min_len, max_len = int(o.get("min_len", 20)), int(o.get("max_len", 60))
-    picks = pick_moments(tr, duration, int(o.get("count", 5)), min_len, max_len, title, video=video,
+    picks = pick_moments(tr, duration, int(o.get("count", 5)), min_len, max_len, o.get("topic") or title, video=video,
                          progress=lambda m: update(stage=m, pct=40))
     clips = []
     for i, c in enumerate(picks, 1):
         base = 45 + int(50 * (i - 1) / len(picks))
         update(stage=f"AI is writing title & description {i} of {len(picks)}", pct=base)
-        describe_clip(video, c, tr["words"], job_dir, title)
+        describe_clip(video, c, tr["words"], job_dir, o.get("topic") or title)
         update(stage=f"Editing clip {i} of {len(picks)}", pct=base + 3)
         mp4, jpg = render_clip(video, c, tr["words"], job_dir, i, o.get("layout", "fit"),
-                               o.get("captions", True), o.get("hook", True))
+                               o.get("captions", True), o.get("hook", True),
+                               endcard=o.get("endcard", "yt"), handle=o.get("handle", ""))
         update(stage=f"Making thumbnail {i} of {len(picks)}", pct=base + 8)
         try:
             cover = make_cover(video, c, job_dir, i)
