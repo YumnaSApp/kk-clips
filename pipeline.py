@@ -18,6 +18,7 @@ CAPTION_FONT = os.environ.get("CAPTION_FONT", "Anton")
 MOCK = os.environ.get("KK_MOCK") == "1"  # offline test mode: fake transcript + picks
 YTDLP_COOKIES = os.environ.get("YTDLP_COOKIES", "")  # optional path to cookies.txt
 PRESET = os.environ.get("FFMPEG_PRESET", "veryfast")
+THREADS = os.environ.get("FFMPEG_THREADS", "2")
 
 
 class PipelineError(Exception):
@@ -196,6 +197,51 @@ def _lines(segments, t0, t1):
     return "\n".join(out)
 
 
+_MODEL_CACHE = {}
+PREFERRED = ["openai/gpt-oss-120b", "llama-3.3-70b-versatile", "openai/gpt-oss-20b",
+             "meta-llama/llama-4-maverick-17b-128e-instruct", "qwen/qwen3-32b", "llama-3.1-8b-instant"]
+
+
+def _pick_model():
+    """Use LLM_MODEL if this key can use it, otherwise the best model the key has access to."""
+    if "m" in _MODEL_CACHE:
+        return _MODEL_CACHE["m"]
+    model = LLM_MODEL
+    try:
+        url = LLM_URL.rsplit("/chat/completions", 1)[0] + "/models"
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {LLM_KEY}",
+                                                   "User-Agent": "Mozilla/5.0 (KKClips/1.0)"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            ids = [m["id"] for m in json.loads(r.read().decode()).get("data", []) if m.get("active", True)]
+        chat = [i for i in ids if not any(x in i for x in ("whisper", "guard", "tts", "orpheus", "distil"))]
+        print(f"[kk] models available: {chat}", flush=True)
+        if model not in chat:
+            model = next((m for m in PREFERRED if m in chat), chat[0] if chat else model)
+    except Exception as e:
+        print(f"[kk] model list failed: {e}", flush=True)
+    _MODEL_CACHE["m"] = model
+    print(f"[kk] using model {model}", flush=True)
+    return model
+
+
+def _chat_json(prompt):
+    model = _pick_model()
+    msg = [{"role": "user", "content": prompt}]
+    body = {"model": model, "temperature": 0.4, "response_format": {"type": "json_object"}, "messages": msg}
+    try:
+        res = _post(LLM_URL, LLM_KEY, json.dumps(body).encode(), {"Content-Type": "application/json"}, timeout=180)
+    except PipelineError as e:
+        if "404" in str(e) or "model" in str(e).lower():
+            _MODEL_CACHE.pop("m", None)
+        if "400" not in str(e):
+            raise
+        body.pop("response_format")  # some models reject JSON mode
+        res = _post(LLM_URL, LLM_KEY, json.dumps(body).encode(), {"Content-Type": "application/json"}, timeout=180)
+    content = res["choices"][0]["message"]["content"] or ""
+    m = re.search(r"\{.*\}", content, re.S)
+    return m.group(0) if m else content
+
+
 def _parse_t(v):
     """Accepts 12.5, "12.5", "1:23", "01:02:03", "[12.5-20]"."""
     if isinstance(v, (int, float)):
@@ -273,12 +319,8 @@ def pick_moments(tr, duration, n, min_len, max_len, video_title, video=None, pro
             progress(f"AI is finding viral moments {k + 1}/{n_win}")
             prompt = PICK_PROMPT.format(n=per_win if n_win > 1 else n, min_len=min_len, max_len=max_len,
                                         video_title=video_title or "unknown", transcript=text)
-            body = json.dumps({"model": LLM_MODEL, "temperature": 0.4,
-                               "response_format": {"type": "json_object"},
-                               "messages": [{"role": "user", "content": prompt}]}).encode()
             try:
-                res = _post(LLM_URL, LLM_KEY, body, {"Content-Type": "application/json"}, timeout=180)
-                content = res["choices"][0]["message"]["content"]
+                content = _chat_json(prompt)
                 print(f"[kk] AI reply: {content[:1500]}", flush=True)
                 data = json.loads(content)
                 if isinstance(data, dict):
@@ -439,18 +481,21 @@ def render_clip(video, clip, words, job_dir, idx, layout="fit", captions=True, h
     with open(os.path.join(job_dir, ass_name), "w", encoding="utf-8") as f:
         f.write(build_ass(words, s, e, clip.get("hook", ""), W, H, captions, hook_on))
     subs = f"ass={ass_name}:fontsdir={FONTS_DIR}" if os.path.isdir(FONTS_DIR) else f"ass={ass_name}"
+    pre = f"scale='if(lt(iw,ih),{W},-2)':'if(lt(iw,ih),-2,{W})',"  # shrink 4K early: short side = {W}
     if layout == "crop":
-        vf = f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,{subs}[v]"
+        vf = f"[0:v]{pre}scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,{subs}[v]"
     else:  # fit: full frame in the middle over a blurred zoomed copy
-        vf = (f"[0:v]split=2[a][b];"
+        vf = (f"[0:v]{pre}split=2[a][b];"
               f"[a]scale={W // 4}:{H // 4}:force_original_aspect_ratio=increase,crop={W // 4}:{H // 4},"
               f"boxblur=10:2,scale={W}:{H},eq=brightness=-0.08[bg];"
               f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease[fg];"
               f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,{subs}[v]")
     out = f"clip{idx}.mp4"
-    cmd = ["ffmpeg", "-y", "-ss", f"{s:.2f}", "-i", os.path.abspath(video), "-t", f"{e - s:.2f}",
-           "-filter_complex", vf, "-map", "[v]", "-map", "0:a?",
+    # low-memory settings so 4K phone videos fit on a small (512 MB) server
+    cmd = ["ffmpeg", "-y", "-threads", THREADS, "-ss", f"{s:.2f}", "-i", os.path.abspath(video), "-t", f"{e - s:.2f}",
+           "-filter_complex_threads", "1", "-filter_complex", vf, "-map", "[v]", "-map", "0:a?",
            "-c:v", "libx264", "-preset", PRESET, "-crf", "21", "-pix_fmt", "yuv420p", "-r", "30",
+           "-threads", THREADS, "-x264-params", "rc-lookahead=8:sync-lookahead=0",
            "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
     run(cmd, cwd=job_dir)
     thumb = f"clip{idx}.jpg"
