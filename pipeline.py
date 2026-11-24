@@ -71,7 +71,8 @@ def download_link(url, job_dir):
 def _post(url, key, body, headers, timeout=600):
     for attempt in range(6):
         req = urllib.request.Request(url, data=body, method="POST",
-                                     headers={"Authorization": f"Bearer {key}", **headers})
+                                     headers={"Authorization": f"Bearer {key}", "User-Agent": "Mozilla/5.0 (KKClips/1.0)",
+                                              "Accept": "application/json", **headers})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return json.loads(r.read().decode())
