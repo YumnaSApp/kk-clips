@@ -49,6 +49,9 @@ input[type=checkbox]{width:18px;height:18px;accent-color:var(--acc)}
 .btns{display:flex;gap:8px;margin-top:auto}
 .btns a,.btns button{flex:1;text-align:center;text-decoration:none;border:1px solid var(--line);background:#1d1d2a;color:var(--txt);border-radius:11px;padding:10px 6px;font-size:13px;font-weight:600;cursor:pointer}
 .btns a.dl{background:var(--acc);border-color:var(--acc)}
+.btns a.dl2{background:#2a2a3d}
+.lbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.desc{font-size:13px;color:#d8d8e6;white-space:pre-wrap;max-height:140px;overflow:auto}
 h2{font-size:17px;margin:22px 0 12px}
 .hist{display:flex;flex-direction:column;gap:8px}
 .hi{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--card);border:1px solid var(--line);border-radius:13px;cursor:pointer}
@@ -182,13 +185,17 @@ function renderClips(j){
     const tags=(k.hashtags||[]).map(t=>'#'+String(t).replace(/^#/,'').toLowerCase()).join(' ');
     const fname=(k.hook||('clip'+(i+1))).replace(/[^A-Za-z0-9 ]/g,'').trim()+'.mp4';
     const d=document.createElement('div'); d.className='clip';
-    d.innerHTML=`<video controls playsinline preload="none" poster="/files/${j.id}/${k.thumb}${p}" src="/files/${j.id}/${k.file}${p}"></video>
+    const poster=k.cover?`/files/${j.id}/${k.cover}${p}`:`/files/${j.id}/${k.thumb}${p}`;
+    d.innerHTML=`<video controls playsinline preload="none" poster="${poster}" src="/files/${j.id}/${k.file}${p}"></video>
       <div class="cb"><div class="row"><span class="score ${k.score<75?'mid':''}">🔥 ${k.score}/100</span><span class="len">${k.length}s · #${i+1}</span></div>
-      <div class="ttl">${esc(k.title)}</div><div class="why">${esc(k.why)}</div><div class="tags">${esc(tags)}</div>
-      <div class="btns"><a class="dl" href="/files/${j.id}/${k.file}${p}${amp}dl=${encodeURIComponent(fname)}">⬇️ Download</a>
-      <button data-t="title">Copy title</button><button data-t="desc">Copy text</button></div></div>`;
+      <div class="lbl">Title</div><div class="ttl">${esc(k.title)}</div>
+      <div class="lbl">Description</div><div class="desc">${esc(k.description)}</div>
+      <div class="tags">${esc(tags)}</div>
+      <div class="btns"><a class="dl" href="/files/${j.id}/${k.file}${p}${amp}dl=${encodeURIComponent(fname)}">⬇️ Video</a>
+      ${k.cover?`<a class="dl2" href="/files/${j.id}/${k.cover}${p}${amp}dl=${encodeURIComponent(fname.replace('.mp4','_thumbnail.jpg'))}">🖼️ Thumbnail</a>`:''}</div>
+      <div class="btns"><button data-t="title">Copy title</button><button data-t="desc">Copy description</button></div></div>`;
     d.querySelector('[data-t=title]').onclick=()=>copy(k.title);
-    d.querySelector('[data-t=desc]').onclick=()=>copy(k.title+'\n\n'+(k.description||'')+'\n\n'+tags);
+    d.querySelector('[data-t=desc]').onclick=()=>copy((k.description||'')+'\n\n'+tags);
     box.appendChild(d);
   }
 }

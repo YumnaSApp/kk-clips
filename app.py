@@ -125,7 +125,7 @@ class H(BaseHTTPRequestHandler):
         if m:
             j = jobs.get(m.group(1))
             return self.send_json(j) if j else self.send_json({"error": "Not found"}, 404)
-        m = re.match(r"^/files/([a-f0-9]{12})/(clip\d+\.(mp4|jpg))$", u.path)
+        m = re.match(r"^/files/([a-f0-9]{12})/(clip\d+(?:_cover)?\.(mp4|jpg))$", u.path)
         if m:
             ctype = "video/mp4" if m.group(3) == "mp4" else "image/jpeg"
             dl = (q.get("dl") or [""])[0]

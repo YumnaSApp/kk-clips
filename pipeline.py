@@ -215,6 +215,7 @@ def _pick_model():
             ids = [m["id"] for m in json.loads(r.read().decode()).get("data", []) if m.get("active", True)]
         chat = [i for i in ids if not any(x in i for x in ("whisper", "guard", "tts", "orpheus", "distil"))]
         print(f"[kk] models available: {chat}", flush=True)
+        _MODEL_CACHE["all"] = chat
         if model not in chat:
             model = next((m for m in PREFERRED if m in chat), chat[0] if chat else model)
     except Exception as e:
@@ -224,9 +225,26 @@ def _pick_model():
     return model
 
 
-def _chat_json(prompt):
-    model = _pick_model()
-    msg = [{"role": "user", "content": prompt}]
+def _vision_model():
+    """A model on this key that can look at images (for titles/descriptions of what's in the clip)."""
+    if "v" in _MODEL_CACHE:
+        return _MODEL_CACHE["v"]
+    _pick_model()
+    chat = _MODEL_CACHE.get("all", [])
+    v = next((m for m in chat if "llama-4-scout" in m), None) or \
+        next((m for m in chat if "llama-4-maverick" in m or "vision" in m or "-vl" in m), None)
+    _MODEL_CACHE["v"] = v
+    print(f"[kk] vision model: {v}", flush=True)
+    return v
+
+
+def _chat_json(prompt, images=None, model=None):
+    model = model or _pick_model()
+    content = prompt
+    if images:
+        content = [{"type": "text", "text": prompt}] + [
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b}} for b in images]
+    msg = [{"role": "user", "content": content}]
     body = {"model": model, "temperature": 0.4, "response_format": {"type": "json_object"}, "messages": msg}
     try:
         res = _post(LLM_URL, LLM_KEY, json.dumps(body).encode(), {"Content-Type": "application/json"}, timeout=180)
@@ -291,7 +309,7 @@ def _energy_picks(video, duration, n, min_len, max_len, taken):
                         "hook": hooks[k % len(hooks)], "title": hooks[k % len(hooks)].title() + " 🔥 #shorts",
                         "description": "The most intense moment from this video. Watch till the end and follow for more!",
                         "hashtags": ["shorts", "viral", "trending", "reels", "fyp"],
-                        "why": "Picked as one of the loudest, most energetic moments."})
+                        "why": "Picked as one of the loudest, most energetic moments.", "auto": True})
         if len(out) >= n:
             break
     return out
@@ -393,6 +411,127 @@ def _mock_picks(duration, n, min_len, max_len):
     return out
 
 
+DESCRIBE_PROMPT = """You are a viral YouTube Shorts / Instagram Reels growth expert.
+Write the post text for ONE short vertical clip ({length:.0f} seconds) cut from a longer video.
+{what}
+Original video name: {video_title}
+Speech in this clip: {speech}
+
+Reply with JSON only:
+{{"hook":"<2-5 word on-screen hook in English, ALL CAPS, no emojis, curiosity-driven>",
+"thumbnail_text":"<2-4 word thumbnail text in English, ALL CAPS, no emojis>",
+"title":"<viral YouTube Shorts title in English, 60-95 characters INCLUDING 2-3 lowercase hashtags like #shorts, 1-2 emojis>",
+"description":"<long keyword-rich English YouTube description, 120-200 words: a hook first line, what happens in the clip, why it is worth watching, searchable keywords people type, a call to like, subscribe and comment>",
+"hashtags":["<12-15 relevant lowercase hashtags without #>"]}}
+Describe only what is really visible/said. Never invent names of people or places you cannot see or read."""
+
+
+def _frames_b64(video, start, end, job_dir, k=3):
+    import base64
+    out = []
+    for i in range(k):
+        t = start + (end - start) * (i + 1) / (k + 1)
+        fp = os.path.join(job_dir, f"f{i}.jpg")
+        try:
+            run(["ffmpeg", "-y", "-threads", THREADS, "-ss", f"{t:.2f}", "-i", os.path.abspath(video),
+                 "-frames:v", "1", "-vf", "scale='if(gt(iw,ih),640,-2)':'if(gt(iw,ih),-2,640)'", "-q:v", "5", fp])
+            out.append(base64.b64encode(open(fp, "rb").read()).decode())
+            os.remove(fp)
+        except PipelineError:
+            pass
+    return out
+
+
+def describe_clip(video, clip, words, job_dir, video_title):
+    """AI looks at frames + speech of the clip and writes hook, title, long description, hashtags."""
+    if MOCK:
+        clip.setdefault("thumbnail_text", clip.get("hook", ""))
+        return clip
+    speech = " ".join(w["w"] for w in words if clip["start"] <= w["start"] <= clip["end"]).strip() or "(no talking, only music/sound)"
+    imgs, model = [], None
+    vm = _vision_model() if LLM_KEY else None
+    if vm:
+        imgs = _frames_b64(video, clip["start"], clip["end"], job_dir)
+        model = vm if imgs else None
+    what = ("The attached images are 3 frames from the clip — describe what you see in them."
+            if model else "Base it on the speech and the video name.")
+    prompt = DESCRIBE_PROMPT.format(length=clip["end"] - clip["start"], what=what,
+                                    video_title=video_title or "unknown", speech=speech[:3000])
+    try:
+        data = json.loads(_chat_json(prompt, imgs if model else None, model=model))
+    except Exception as e:
+        print(f"[kk] describe failed ({e}), retrying text-only", flush=True)
+        try:
+            data = json.loads(_chat_json(DESCRIBE_PROMPT.format(length=clip["end"] - clip["start"],
+                              what="Base it on the speech and the video name.", video_title=video_title or "unknown",
+                              speech=speech[:3000])))
+        except Exception as e2:
+            print(f"[kk] describe failed: {e2}", flush=True)
+            data = {}
+    print(f"[kk] describe: {json.dumps(data)[:600]}", flush=True)
+    if not isinstance(data, dict):
+        data = {}
+    for k in ("hook", "title", "description", "thumbnail_text"):
+        v = str(data.get(k) or "").strip()
+        if not v:
+            continue
+        if k == "hook" and clip.get("hook") and not clip.get("auto"):
+            continue  # keep the hook the AI picked together with the moment
+        clip[k] = v
+    if isinstance(data.get("hashtags"), list) and data["hashtags"]:
+        clip["hashtags"] = [str(h).lstrip("#").lower().replace(" ", "") for h in data["hashtags"]][:15]
+    t = clip.get("title", "")
+    if len(t) > 100:
+        clip["title"] = t[:100].rsplit(" ", 1)[0]
+    clip.setdefault("thumbnail_text", clip.get("hook", ""))
+    return clip
+
+
+def make_cover(video, clip, job_dir, idx, size=(1080, 1920)):
+    """Full-size 9:16 thumbnail: best-looking frame, boosted colours, big text."""
+    W, H = size
+    text = (clip.get("thumbnail_text") or clip.get("hook") or "").upper()
+    ass_name = f"cover{idx}.ass"
+    fs = int(H * 0.085)
+    words, lines, cur = _esc(text).split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > 11 and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    colors = ["&H00FFFFFF&", "&H0000E5FF&", "&H0066FF33&"]
+    body = "\\N".join("{\\c" + colors[i % 3] + "}" + l for i, l in enumerate(lines))
+    ass = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {W}
+PlayResY: {H}
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: C,{CAPTION_FONT},{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,-1,0,0,0,100,100,0,0,1,{fs // 7},4,2,40,40,{int(H * 0.18)},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:10.00,C,,0,0,0,,{body}
+"""
+    with open(os.path.join(job_dir, ass_name), "w", encoding="utf-8") as f:
+        f.write(ass)
+    subs = f"ass={ass_name}:fontsdir={FONTS_DIR}" if os.path.isdir(FONTS_DIR) else f"ass={ass_name}"
+    pre = f"scale='if(lt(iw,ih),{W},-2)':'if(lt(iw,ih),-2,{W})'"
+    vf = (f"fps=2,{pre},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},thumbnail=n=20,"
+          f"eq=brightness=0.05:contrast=1.15:saturation=1.25,unsharp=5:5:0.8,setpts=0,{subs}")
+    out = f"clip{idx}_cover.jpg"
+    run(["ffmpeg", "-y", "-threads", THREADS, "-ss", f"{clip['start']:.2f}", "-i", os.path.abspath(video),
+         "-t", f"{clip['end'] - clip['start']:.2f}", "-vf", vf, "-frames:v", "1", "-q:v", "2", out], cwd=job_dir)
+    run(["ffmpeg", "-y", "-i", out, "-vf", "scale=360:-2", "-q:v", "4", f"clip{idx}.jpg"], cwd=job_dir)
+    os.remove(os.path.join(job_dir, ass_name))
+    return out
+
+
 # ---------------------------------------------------------------- rendering
 
 def _ass_time(t):
@@ -446,7 +585,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 k += 1
             parts.append(" ".join(seg))
         text = "{\\fad(150,0)}" + "\\N".join(parts)
-        ev.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(dur)},Hook,,0,0,0,,{text}")
+        ev.append(f"Dialogue: 1,{_ass_time(0)},{_ass_time(dur + 2)},Hook,,0,0,0,,{text}")
     if captions:
         cw = [w for w in words if w["end"] > clip_start and w["start"] < clip_end and w["w"]]
         groups, g = [], []
@@ -528,10 +667,19 @@ def process(job, job_dir, update):
                          progress=lambda m: update(stage=m, pct=40))
     clips = []
     for i, c in enumerate(picks, 1):
-        update(stage=f"Rendering clip {i} of {len(picks)}", pct=45 + int(50 * (i - 1) / len(picks)))
+        base = 45 + int(50 * (i - 1) / len(picks))
+        update(stage=f"AI is writing title & description {i} of {len(picks)}", pct=base)
+        describe_clip(video, c, tr["words"], job_dir, title)
+        update(stage=f"Editing clip {i} of {len(picks)}", pct=base + 3)
         mp4, jpg = render_clip(video, c, tr["words"], job_dir, i, o.get("layout", "fit"),
                                o.get("captions", True), o.get("hook", True))
-        c.update(file=mp4, thumb=jpg, length=round(c["end"] - c["start"], 1))
+        update(stage=f"Making thumbnail {i} of {len(picks)}", pct=base + 8)
+        try:
+            cover = make_cover(video, c, job_dir, i)
+        except PipelineError as e:
+            print(f"[kk] cover failed: {e}", flush=True)
+            cover = None
+        c.update(file=mp4, thumb=jpg, cover=cover, length=round(c["end"] - c["start"], 1))
         clips.append(c)
         update(clips=clips)
     shutil.rmtree(os.path.join(job_dir, "audio"), ignore_errors=True)
