@@ -48,13 +48,24 @@ def _cookies_file(job_dir):
     """Cookies from a file path (YTDLP_COOKIES) or pasted text (YTDLP_COOKIES_TXT)."""
     if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
         return YTDLP_COOKIES
-    txt = os.environ.get("YTDLP_COOKIES_TXT", "").strip()
-    if txt:
-        path = os.path.join(job_dir, "cookies.txt")
-        with open(path, "w") as f:
-            f.write(txt.replace("\\n", "\n") + "\n")
-        return path
-    return ""
+    txt = os.environ.get("YTDLP_COOKIES_TXT", "").replace("\\t", "\t").replace("\\n", "\n").strip()
+    if not txt:
+        return ""
+    lines = []
+    for line in txt.splitlines():
+        line = line.strip()
+        if not line or (line.startswith("#") and not line.startswith("#HttpOnly_")):
+            continue
+        parts = line.split("\t") if "\t" in line else line.split()
+        if len(parts) >= 7:  # domain flag path secure expiry name value
+            lines.append("\t".join(parts[:6] + [" ".join(parts[6:])]))
+    if not lines:
+        raise PipelineError("The YTDLP_COOKIES_TXT value on Render is not a cookies file. "
+                            "Open cookies.txt, copy ALL the text inside it, and paste that as the value (not the file name).")
+    path = os.path.join(job_dir, "cookies.txt")
+    with open(path, "w") as f:
+        f.write("# Netscape HTTP Cookie File\n" + "\n".join(lines) + "\n")
+    return path
 
 
 # Different YouTube "clients" — if one is blocked from the server, the next often works.
