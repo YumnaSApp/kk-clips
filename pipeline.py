@@ -44,27 +44,56 @@ def probe_has_audio(path):
 
 # ---------------------------------------------------------------- input
 
+def _cookies_file(job_dir):
+    """Cookies from a file path (YTDLP_COOKIES) or pasted text (YTDLP_COOKIES_TXT)."""
+    if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
+        return YTDLP_COOKIES
+    txt = os.environ.get("YTDLP_COOKIES_TXT", "").strip()
+    if txt:
+        path = os.path.join(job_dir, "cookies.txt")
+        with open(path, "w") as f:
+            f.write(txt.replace("\\n", "\n") + "\n")
+        return path
+    return ""
+
+
+# Different YouTube "clients" — if one is blocked from the server, the next often works.
+YT_CLIENTS = [None, "tv_simply", "mweb", "web_safari", "android_vr", "ios"]
+
+
 def download_link(url, job_dir):
-    """Download a YouTube/other link with yt-dlp (max 1080p)."""
+    """Download a YouTube/other link with yt-dlp (max 1080p), trying several clients."""
     if not shutil.which("yt-dlp"):
         raise PipelineError("yt-dlp is not installed on the server.")
     out_tmpl = os.path.join(job_dir, "source.%(ext)s")
-    cmd = ["yt-dlp", "--no-playlist", "-f",
-           "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b",
-           "--merge-output-format", "mp4", "-o", out_tmpl, "--print", "title", "--no-simulate"]
-    if YTDLP_COOKIES and os.path.exists(YTDLP_COOKIES):
-        cmd += ["--cookies", YTDLP_COOKIES]
-    p = subprocess.run(cmd + [url], capture_output=True, text=True)
-    if p.returncode != 0:
+    base = ["yt-dlp", "--no-playlist", "-f",
+            "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b",
+            "--merge-output-format", "mp4", "-o", out_tmpl, "--print", "title", "--no-simulate",
+            "--retries", "3", "--no-warnings"]
+    cookies = _cookies_file(job_dir)
+    if cookies:
+        base += ["--cookies", cookies]
+    is_yt = "youtu" in url
+    err = ""
+    for client in (YT_CLIENTS if is_yt else [None]):
+        cmd = list(base)
+        if client:
+            cmd += ["--extractor-args", f"youtube:player_client={client}"]
+        p = subprocess.run(cmd + [url], capture_output=True, text=True)
+        if p.returncode == 0:
+            title = (p.stdout.strip().splitlines() or ["Video"])[0]
+            for f in os.listdir(job_dir):
+                if f.startswith("source.") and not f.endswith(".part"):
+                    return os.path.join(job_dir, f), title
         err = p.stderr[-500:]
-        if "Sign in to confirm" in err or "bot" in err:
-            raise PipelineError("YouTube blocked the server download. Download the video on your phone and use Upload instead.")
-        raise PipelineError("Link download failed: " + err)
-    title = (p.stdout.strip().splitlines() or ["Video"])[0]
-    for f in os.listdir(job_dir):
-        if f.startswith("source."):
-            return os.path.join(job_dir, f), title
-    raise PipelineError("Download finished but no file was found.")
+        for f in os.listdir(job_dir):  # clean partial files before next try
+            if f.startswith("source."):
+                os.remove(os.path.join(job_dir, f))
+    if is_yt and any(k in err for k in ("403", "Sign in", "bot", "player response")):
+        raise PipelineError("YouTube blocked the server from downloading this video. "
+                            "Quick fix: download the video on your phone and use Upload. "
+                            "Permanent fix: add your YouTube cookies (YTDLP_COOKIES_TXT) on Render.")
+    raise PipelineError("Link download failed: " + err)
 
 
 # ---------------------------------------------------------------- HTTP helpers

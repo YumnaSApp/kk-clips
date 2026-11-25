@@ -34,6 +34,7 @@ Then open http://localhost:8000
 | STT_MODEL | whisper-large-v3-turbo | Transcription model |
 | LLM_URL / LLM_API_KEY | Groq | Any OpenAI-compatible AI service |
 | YTDLP_COOKIES | — | Path to cookies.txt if YouTube blocks link downloads |
+| YTDLP_COOKIES_TXT | — | Paste the full cookies.txt text here (easier than a file on Render) |
 | KEEP_JOBS | 15 | How many past videos are kept |
 | FFMPEG_PRESET | veryfast | Render speed/quality setting |
 
