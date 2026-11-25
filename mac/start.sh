@@ -3,6 +3,10 @@
 cd "$HOME/kk-clips"
 for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && eval "$($b shellenv)"; done
 [ -f .env ] && source .env
+# ffmpeg-full has captions (libass) + text (freetype) support the plain ffmpeg lacks
+FF="$(brew --prefix ffmpeg-full 2>/dev/null)/bin"
+[ -x "$FF/ffmpeg" ] || { echo "Installing ffmpeg-full (one time)..."; brew install ffmpeg-full; FF="$(brew --prefix ffmpeg-full)/bin"; }
+export PATH="$FF:$PATH"
 export PATH="$PWD/.venv/bin:$PATH" PORT=8000 DATA_DIR="$HOME/kk-clips/data"
 IP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
 echo

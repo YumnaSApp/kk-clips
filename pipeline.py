@@ -368,6 +368,33 @@ def _energy_picks(video, duration, n, min_len, max_len, taken):
     return out
 
 
+def _ask_picks(text, n, min_len, max_len, video_title, depth=0):
+    """Ask the AI for moments; if the request is too big for the free tier, split it in half."""
+    prompt = PICK_PROMPT.format(n=n, min_len=min_len, max_len=max_len,
+                                video_title=video_title or "unknown", transcript=text)
+    try:
+        content = _chat_json(prompt)
+        print(f"[kk] AI reply: {content[:1500]}", flush=True)
+        data = json.loads(content)
+        if isinstance(data, dict):
+            data = data.get("clips") or next((v for v in data.values() if isinstance(v, list)), [])
+        return [c for c in data if isinstance(c, dict)]
+    except PipelineError as e:
+        if ("413" in str(e) or "too large" in str(e)) and depth < 3:
+            lines = text.splitlines()
+            half = len(lines) // 2
+            if half:
+                print("[kk] AI request too large, splitting", flush=True)
+                time.sleep(20)  # let the per-minute token limit reset
+                a = _ask_picks("\n".join(lines[:half]), max(1, n // 2 + 1), min_len, max_len, video_title, depth + 1)
+                time.sleep(20)
+                return a + _ask_picks("\n".join(lines[half:]), max(1, n // 2 + 1), min_len, max_len, video_title, depth + 1)
+        print(f"[kk] AI error: {e}", flush=True)
+    except (KeyError, ValueError, IndexError, TypeError) as e:
+        print(f"[kk] AI reply unreadable: {e}", flush=True)
+    return []
+
+
 def pick_moments(tr, duration, n, min_len, max_len, video_title, video=None, progress=lambda m: None):
     if MOCK:
         return _mock_picks(duration, n, min_len, max_len)
@@ -379,7 +406,7 @@ def pick_moments(tr, duration, n, min_len, max_len, video_title, video=None, pro
     segs = tr["segments"]
     found = []
     if segs:
-        window = 900  # 15-min windows keep each AI request small for free-tier limits
+        window = 420  # 7-min windows keep each AI request small for free-tier limits
         n_win = max(1, math.ceil(duration / window))
         per_win = max(2, math.ceil(n / n_win) + 1)
         for k in range(n_win):
@@ -388,19 +415,7 @@ def pick_moments(tr, duration, n, min_len, max_len, video_title, video=None, pro
             if len(text) < 20:
                 continue
             progress(f"AI is finding viral moments {k + 1}/{n_win}")
-            prompt = PICK_PROMPT.format(n=per_win if n_win > 1 else n, min_len=min_len, max_len=max_len,
-                                        video_title=video_title or "unknown", transcript=text)
-            try:
-                content = _chat_json(prompt)
-                print(f"[kk] AI reply: {content[:1500]}", flush=True)
-                data = json.loads(content)
-                if isinstance(data, dict):
-                    data = data.get("clips") or next((v for v in data.values() if isinstance(v, list)), [])
-                found += [c for c in data if isinstance(c, dict)]
-            except PipelineError as e:
-                print(f"[kk] AI error: {e}", flush=True)
-            except (KeyError, ValueError, IndexError, TypeError) as e:
-                print(f"[kk] AI reply unreadable: {e}", flush=True)
+            found += _ask_picks(text, per_win if n_win > 1 else n, min_len, max_len, video_title)
     picks = _clean_picks(found, tr["words"], duration, n, min_len, max_len)
     print(f"[kk] duration={duration:.0f}s AI gave {len(found)}, kept {len(picks)}", flush=True)
     if not picks and video:  # little or no speech: use the most energetic moments

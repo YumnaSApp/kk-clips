@@ -15,7 +15,7 @@ if ! command -v brew >/dev/null 2>&1; then
 fi
 
 # 2. Tools
-brew install python@3.12 ffmpeg deno git
+brew install python@3.12 ffmpeg-full deno git || brew install ffmpeg-full
 
 # 3. App code
 APP="$HOME/kk-clips"
