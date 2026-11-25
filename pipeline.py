@@ -81,7 +81,7 @@ def download_link(url, job_dir):
         raise PipelineError("yt-dlp is not installed on the server.")
     out_tmpl = os.path.join(job_dir, "source.%(ext)s")
     base = ["yt-dlp", "--no-playlist", "-f",
-            "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b",
+            "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
             "--merge-output-format", "mp4", "-o", out_tmpl, "--print", "title", "--no-simulate",
             "--retries", "3", "--no-warnings"]
     cookies = _cookies_file(job_dir)
@@ -89,7 +89,11 @@ def download_link(url, job_dir):
         base += ["--cookies", cookies]
     is_yt = "youtu" in url
     err = ""
-    for client in (YT_CLIENTS if is_yt else [None]):
+    clients = YT_CLIENTS if is_yt else [None]
+    if is_yt and cookies:  # these clients support logged-in cookies
+        clients = [None, "web", "mweb", "tv", "web_safari"]
+    first_err = ""
+    for client in clients:
         cmd = list(base)
         if client:
             cmd += ["--extractor-args", f"youtube:player_client={client}"]
@@ -100,6 +104,7 @@ def download_link(url, job_dir):
                 if f.startswith("source.") and not f.endswith(".part"):
                     return os.path.join(job_dir, f), title
         err = p.stderr[-500:]
+        first_err = first_err or err
         for f in os.listdir(job_dir):  # clean partial files before next try
             if f.startswith("source."):
                 os.remove(os.path.join(job_dir, f))
@@ -108,7 +113,7 @@ def download_link(url, job_dir):
                             "Quick fix: download the video on your phone and use Upload. "
                             + ("Your cookies were used but YouTube still refused (" + err.strip().splitlines()[-1][:200] + ")."
                                if cookies else "Permanent fix: add your YouTube cookies (YTDLP_COOKIES_TXT) on Render."))
-    raise PipelineError("Link download failed: " + err)
+    raise PipelineError("Link download failed: " + (first_err or err))
 
 
 # ---------------------------------------------------------------- HTTP helpers
