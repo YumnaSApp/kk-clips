@@ -83,7 +83,10 @@ def download_link(url, job_dir):
     base = ["yt-dlp", "--no-playlist", "-f",
             "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
             "--merge-output-format", "mp4", "-o", out_tmpl, "--print", "title", "--no-simulate",
-            "--retries", "3", "--no-warnings"]
+            "--retries", "3", "--remote-components", "ejs:github"]
+    deno = shutil.which("deno")
+    if deno:  # JS runtime YouTube now requires to unlock video formats
+        base += ["--js-runtimes", "deno:" + deno]
     cookies = _cookies_file(job_dir)
     if cookies:
         base += ["--cookies", cookies]
@@ -103,7 +106,8 @@ def download_link(url, job_dir):
             for f in os.listdir(job_dir):
                 if f.startswith("source.") and not f.endswith(".part"):
                     return os.path.join(job_dir, f), title
-        err = p.stderr[-500:]
+        err = "\n".join(l for l in p.stderr.splitlines() if "WARNING" in l or "ERROR" in l)[-700:] or p.stderr[-500:]
+        print(f"[yt-dlp client={client}] rc={p.returncode}\n{p.stderr[-1500:]}", flush=True)
         first_err = first_err or err
         for f in os.listdir(job_dir):  # clean partial files before next try
             if f.startswith("source."):
