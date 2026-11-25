@@ -62,6 +62,9 @@ def _cookies_file(job_dir):
     if not lines:
         raise PipelineError("The YTDLP_COOKIES_TXT value on Render is not a cookies file. "
                             "Open cookies.txt, copy ALL the text inside it, and paste that as the value (not the file name).")
+    if not any("youtube.com" in l.split("\t")[0] for l in lines):
+        raise PipelineError("The cookies on Render are not YouTube cookies. Open youtube.com in Chrome first, "
+                            "then click the extension and Copy, and paste that on Render.")
     path = os.path.join(job_dir, "cookies.txt")
     with open(path, "w") as f:
         f.write("# Netscape HTTP Cookie File\n" + "\n".join(lines) + "\n")
@@ -103,7 +106,8 @@ def download_link(url, job_dir):
     if is_yt and any(k in err for k in ("403", "Sign in", "bot", "player response")):
         raise PipelineError("YouTube blocked the server from downloading this video. "
                             "Quick fix: download the video on your phone and use Upload. "
-                            "Permanent fix: add your YouTube cookies (YTDLP_COOKIES_TXT) on Render.")
+                            + ("Your cookies were used but YouTube still refused (" + err.strip().splitlines()[-1][:200] + ")."
+                               if cookies else "Permanent fix: add your YouTube cookies (YTDLP_COOKIES_TXT) on Render."))
     raise PipelineError("Link download failed: " + err)
 
 
